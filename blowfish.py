@@ -15,16 +15,24 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
+from os import urandom
+"""
+This module implements the Blowfish cipher using only Python (3.4+).
 
+Blowfish is a block cipher that can be used for symmetric-key encryption. It
+has a 8-byte block size and supports a variable-length key, from 4 to 56 bytes.
+It's fast, free and has been analyzed considerably. It was designed by Bruce
+Schneier and more details about it can be found at
+<https://www.schneier.com/blowfish.html>.
+"""
 
 from struct import Struct, error as struct_error
 from itertools import cycle as iter_cycle
-import hashlib
-import sys
-import random
-import Hash
-# security level 1 means  512 bits public key and hash length
-SECURITY_LEVEL = 1
+
+__version__ = "0.7.1"
+
+# PI_P_ARRAY & PI_S_BOXES are the hexadecimal digits of π (the irrational)
+# taken from <https://www.schneier.com/code/constants.txt>.
 
 # 1 x 18
 PI_P_ARRAY = (
@@ -217,14 +225,8 @@ PI_S_BOXES = (
   ),
 )
 
-class Blowfish(object):  
-  def __init__(
-    self, 
-    key,
-    byte_order = "big",
-    P_array = PI_P_ARRAY,
-    S_boxes = PI_S_BOXES
-  ):
+class Cipher(object):
+  def __init__(self, key, P_array = PI_P_ARRAY, S_boxes = PI_S_BOXES):
     if not 4 <= len(key) <= 56:
       raise ValueError("key is not between 4 and 56 bytes")
     
@@ -233,14 +235,9 @@ class Blowfish(object):
     
     if len(S_boxes) != 4 or any(len(box) != 256 for box in S_boxes):
       raise ValueError("S-boxes is not a 4 x 256 sequence")
-      
-    if byte_order == "big":
-      byte_order_fmt = ">"
-    elif byte_order == "little":
-      byte_order_fmt = "<"
-    else:
-      raise ValueError("byte order must either be 'big' or 'little'")
-    self.byte_order = byte_order
+  
+    byte_order_fmt = ">"
+
     
     # Create structs
     u4_2_struct = Struct("{}2I".format(byte_order_fmt))
@@ -312,9 +309,11 @@ class Blowfish(object):
     # Save S
     self.S = tuple(tuple(box) for box in S)
     
+
+  # blowfish iterations  
   @staticmethod
   def _encrypt(L, R, P, S1, S2, S3, S4, u4_1_pack, u1_4_unpack):
-    for p1, p2 in P[:-1]:
+    for p1, p2 in P[:-1]: # double iteration of regular blofish
       L ^= p1
       a, b, c, d = u1_4_unpack(u4_1_pack(L))
       R ^= (S1[a] + S2[b] ^ S3[c]) + S4[d] & 0xffffffff
@@ -336,486 +335,24 @@ class Blowfish(object):
     p_first, p_second = P[0]
     return R ^ p_first, L ^ p_second
   
-  def encrypt_block(self, block):
-    S0, S1, S2, S3 = self.S
-    P = self.P
-    
-    u4_1_pack = self._u4_1_pack
-    u1_4_unpack = self._u1_4_unpack
-    
-    try:
-      L, R = self._u4_2_unpack(block)
-    except struct_error:
-      raise ValueError("block is not 8 bytes in length")
-    
-    for p1, p2 in P[:-1]:
-      L ^= p1
-      a, b, c, d = u1_4_unpack(u4_1_pack(L))
-      R ^= (S0[a] + S1[b] ^ S2[c]) + S3[d] & 0xffffffff
-      R ^= p2
-      a, b, c, d = u1_4_unpack(u4_1_pack(R))
-      L ^= (S0[a] + S1[b] ^ S2[c]) + S3[d] & 0xffffffff
-    p_penultimate, p_last = P[-1]
-    return self._u4_2_pack(R ^ p_last, L ^ p_penultimate)
-  
-  def decrypt_block(self, block):
-    S0, S1, S2, S3 = self.S
-    P = self.P
-    
-    u4_1_pack = self._u4_1_pack
-    u1_4_unpack = self._u1_4_unpack
-    
-    try:
-      L, R = self._u4_2_unpack(block)
-    except struct_error:
-      raise ValueError("block is not 8 bytes in length")
-    
-    for p2, p1 in P[:0:-1]:
-      L ^= p1
-      a, b, c, d = u1_4_unpack(u4_1_pack(L))
-      R ^= (S0[a] + S1[b] ^ S2[c]) + S3[d] & 0xffffffff
-      R ^= p2
-      a, b, c, d = u1_4_unpack(u4_1_pack(R))
-      L ^= (S0[a] + S1[b] ^ S2[c]) + S3[d] & 0xffffffff
-    p_first, p_second = P[0]
-    return self._u4_2_pack(R ^ p_first, L ^ p_second)
-    
-  def encrypt_ecb(self, data):
-    S1, S2, S3, S4 = self.S
-    P = self.P
-    
-    u4_1_pack = self._u4_1_pack
-    u1_4_unpack = self._u1_4_unpack
-    encrypt = self._encrypt
-    
-    u4_2_pack = self._u4_2_pack
-    
-    try:
-      LR_iter = self._u4_2_iter_unpack(data)
-    except struct_error:
-      raise ValueError("data is not a multiple of the block-size in length")
-    
-    for plain_L, plain_R in LR_iter:
-      yield u4_2_pack(
-        *encrypt(plain_L, plain_R, P, S1, S2, S3, S4, u4_1_pack, u1_4_unpack)
-      )
-    
-  def decrypt_ecb(self, data):
-    S1, S2, S3, S4 = self.S
-    P = self.P
-    
-    u4_1_pack = self._u4_1_pack
-    u1_4_unpack = self._u1_4_unpack
-    decrypt = self._decrypt
-    
-    u4_2_pack = self._u4_2_pack
-    
-    try:
-      LR_iter = self._u4_2_iter_unpack(data)
-    except struct_error:
-      raise ValueError("data is not a multiple of the block-size in length")
-    
-    for cipher_L, cipher_R in LR_iter:
-      yield u4_2_pack(
-        *decrypt(cipher_L, cipher_R, P, S1, S2, S3, S4, u4_1_pack, u1_4_unpack)
-      )
-      
-  def encrypt_ecb_cts(self, data):
-    data_len = len(data)
-    if data_len <= 8:
-      raise ValueError("data is not greater than 8 bytes in length")
-      
-    S1, S2, S3, S4 = self.S
-    P = self.P
-    
-    u4_1_pack = self._u4_1_pack
-    u1_4_unpack = self._u1_4_unpack
-    u4_2_pack = self._u4_2_pack
-    u4_2_unpack = self._u4_2_unpack
-    encrypt = self._encrypt
-    
-    extra_bytes = data_len % 8
-    last_block_stop_i = data_len - extra_bytes
-    
-    plain_L, plain_R = u4_2_unpack(data[0:8])
-    cipher_block = u4_2_pack(
-      *encrypt(plain_L, plain_R, P, S1, S2, S3, S4, u4_1_pack, u1_4_unpack)
-    )
-    
-    for plain_L, plain_R in self._u4_2_iter_unpack(data[8:last_block_stop_i]):
-      yield cipher_block
-      cipher_block = u4_2_pack(
-        *encrypt(plain_L, plain_R, P, S1, S2, S3, S4, u4_1_pack, u1_4_unpack)
-      )
-    
-    plain_L, plain_R = u4_2_unpack(
-      data[last_block_stop_i:] + cipher_block[extra_bytes:]
-    )
-    
-    yield u4_2_pack(
-      *encrypt(plain_L, plain_R, P, S1, S2, S3, S4, u4_1_pack, u1_4_unpack)
-    )
-    yield cipher_block[:extra_bytes]
-    
-  def decrypt_ecb_cts(self, data):
-    data_len = len(data)
-    if data_len <= 8:
-      raise ValueError("data is not greater than 8 bytes in length")
-      
-    S1, S2, S3, S4 = self.S
-    P = self.P
-    
-    u4_1_pack = self._u4_1_pack
-    u1_4_unpack = self._u1_4_unpack
-    u4_2_pack = self._u4_2_pack
-    u4_2_unpack = self._u4_2_unpack
-    decrypt = self._decrypt
-    
-    extra_bytes = data_len % 8
-    last_block_stop_i = data_len - extra_bytes
-        
-    cipher_L, cipher_R = u4_2_unpack(data[0:8])
-    plain_block = u4_2_pack(
-      *decrypt(cipher_L, cipher_R, P, S1, S2, S3, S4, u4_1_pack, u1_4_unpack)
-    )
-    
-    for cipher_L, cipher_R in self._u4_2_iter_unpack(data[8:last_block_stop_i]):
-      yield plain_block
-      plain_block = u4_2_pack(
-        *decrypt(cipher_L, cipher_R, P, S1, S2, S3, S4, u4_1_pack, u1_4_unpack)
-      )
-    
-    cipher_L, cipher_R = u4_2_unpack(
-      data[last_block_stop_i:] + plain_block[extra_bytes:]
-    )
-    
-    yield u4_2_pack(
-      *decrypt(cipher_L, cipher_R, P, S1, S2, S3, S4, u4_1_pack, u1_4_unpack)
-    )
-    yield plain_block[:extra_bytes]
-    
-  def encrypt_cbc(self, data, init_vector):
-    S1, S2, S3, S4 = self.S
-    P = self.P
-    
-    u4_1_pack = self._u4_1_pack
-    u1_4_unpack = self._u1_4_unpack
-    encrypt = self._encrypt
-    
-    u4_2_pack = self._u4_2_pack
-    
-    try:
-      prev_cipher_L, prev_cipher_R = self._u4_2_unpack(init_vector)
-    except struct_error:
-      raise ValueError("initialization vector is not 8 bytes in length")
-    
-    try:
-      LR_iter = self._u4_2_iter_unpack(data)
-    except struct_error:
-      raise ValueError("data is not a multiple of the block-size in length")
-    
-    for plain_L, plain_R in LR_iter:
-      prev_cipher_L, prev_cipher_R = encrypt(
-        prev_cipher_L ^ plain_L,
-        prev_cipher_R ^ plain_R,
-        P, S1, S2, S3, S4,
-        u4_1_pack, u1_4_unpack
-      )
-      yield u4_2_pack(prev_cipher_L, prev_cipher_R)
-  
-  def decrypt_cbc(self, data, init_vector):
-    S1, S2, S3, S4 = self.S
-    P = self.P
-    
-    u4_1_pack = self._u4_1_pack
-    u1_4_unpack = self._u1_4_unpack
-    decrypt = self._decrypt
-    
-    u4_2_pack = self._u4_2_pack
-    
-    try:
-      prev_cipher_L, prev_cipher_R = self._u4_2_unpack(init_vector)
-    except struct_error:
-      raise ValueError("initialization vector is not 8 bytes in length")
-    
-    try:
-      LR_iter = self._u4_2_iter_unpack(data)
-    except struct_error:
-      raise ValueError("data is not a multiple of the block-size in length")
-    
-    for cipher_L, cipher_R in LR_iter:
-      L, R = decrypt(
-        cipher_L, cipher_R,
-        P, S1, S2, S3, S4,
-        u4_1_pack, u1_4_unpack
-      )
-      yield u4_2_pack(prev_cipher_L ^ L, prev_cipher_R ^ R)
-      prev_cipher_L = cipher_L
-      prev_cipher_R = cipher_R
-      
-  def encrypt_cbc_cts(self, data, init_vector):
-    data_len = len(data)
-    if data_len <= 8:
-      raise ValueError("data is not greater than 8 bytes in length")
-    
-    S1, S2, S3, S4 = self.S
-    P = self.P
-    
-    u4_1_pack = self._u4_1_pack
-    u1_4_unpack = self._u1_4_unpack
-    u4_2_pack = self._u4_2_pack
-    u4_2_unpack = self._u4_2_unpack
-    encrypt = self._encrypt
-    
-    try:
-      prev_cipher_L, prev_cipher_R = u4_2_unpack(init_vector)
-    except struct_error:
-      raise ValueError("initialization vector is not 8 bytes in length")
-      
-    extra_bytes = data_len % 8
-    last_block_stop_i = data_len - extra_bytes
-    
-    plain_L, plain_R = u4_2_unpack(data[0:8])
-    prev_cipher_L, prev_cipher_R = encrypt(
-      plain_L ^ prev_cipher_L,
-      plain_R ^ prev_cipher_R,
-      P, S1, S2, S3, S4,
-      u4_1_pack, u1_4_unpack
-    )
-    cipher_block = u4_2_pack(prev_cipher_L, prev_cipher_R)
-    
-    for plain_L, plain_R in self._u4_2_iter_unpack(data[8:last_block_stop_i]):
-      yield cipher_block
-      prev_cipher_L, prev_cipher_R = encrypt(
-        plain_L ^ prev_cipher_L,
-        plain_R ^ prev_cipher_R,
-        P, S1, S2, S3, S4,
-        u4_1_pack, u1_4_unpack
-      )
-      cipher_block = u4_2_pack(prev_cipher_L, prev_cipher_R)
-    
-    P_L, P_R = u4_2_unpack(data[last_block_stop_i:] + bytes(8 - extra_bytes))
-    
-    yield u4_2_pack(
-      *encrypt(
-        prev_cipher_L ^ P_L,
-        prev_cipher_R ^ P_R,
-        P, S1, S2, S3, S4,
-        u4_1_pack, u1_4_unpack
-      )
-    )
-    
-    yield cipher_block[:extra_bytes]
-    
-  def decrypt_cbc_cts(self, data, init_vector):
-    data_len = len(data)
-    if data_len <= 8:
-      raise ValueError("data is not greater than 8 bytes in length")
-    
-    S1, S2, S3, S4 = self.S
-    P = self.P
-    
-    u4_1_pack = self._u4_1_pack
-    u1_4_unpack = self._u1_4_unpack
-    u4_2_pack = self._u4_2_pack
-    u4_2_unpack = self._u4_2_unpack
-    decrypt = self._decrypt
-    
-    try:
-      prev_cipher_L, prev_cipher_R = u4_2_unpack(init_vector)
-    except struct_error:
-      raise ValueError("initialization vector is not 8 bytes in length")
-      
-    extra_bytes = data_len % 8
-    last_block_stop_i = data_len - extra_bytes
-    last_block_start_i = last_block_stop_i - 8
-    
-    for cipher_L, cipher_R in self._u4_2_iter_unpack(
-      data[0:last_block_start_i]
-    ):
-      L, R = decrypt(
-        cipher_L, cipher_R,
-        P, S1, S2, S3, S4,
-        u4_1_pack, u1_4_unpack
-      )
-      yield u4_2_pack(L ^ prev_cipher_L, R ^ prev_cipher_R)
-      prev_cipher_L = cipher_L
-      prev_cipher_R = cipher_R
-    
-    cipher_L, cipher_R = u4_2_unpack(data[last_block_start_i:last_block_stop_i])
-    L, R = decrypt(
-      cipher_L, cipher_R,
-      P, S1, S2, S3, S4,
-      u4_1_pack, u1_4_unpack
-    )
-    
-    C_L, C_R = u4_2_unpack(data[last_block_stop_i:] + bytes(8 - extra_bytes))
-    
-    Xn = u4_2_pack(L ^ C_L, R ^ C_R)
-    
-    E_L, E_R = u4_2_unpack(data[last_block_stop_i:] + Xn[extra_bytes:])
-    L, R = decrypt(
-      E_L, E_R,
-      P, S1, S2, S3, S4,
-      u4_1_pack, u1_4_unpack
-    )
-    yield u4_2_pack(L ^ prev_cipher_L, R ^ prev_cipher_R)
-     
-    yield Xn[:extra_bytes]
-    
-  def encrypt_pcbc(self, data, init_vector):
-    S1, S2, S3, S4 = self.S
-    P = self.P
-    
-    u4_1_pack = self._u4_1_pack
-    u1_4_unpack = self._u1_4_unpack
-    encrypt = self._encrypt
-    
-    u4_2_pack = self._u4_2_pack
-    
-    try:
-      init_L, init_R = self._u4_2_unpack(init_vector)
-    except struct_error:
-      raise ValueError("initialization vector is not 8 bytes in length")
-    
-    try:
-      LR_iter = self._u4_2_iter_unpack(data)
-    except struct_error:
-      raise ValueError("data is not a multiple of the block-size in length")
-    
-    for plain_L, plain_R in LR_iter:
-      cipher_L, cipher_R = encrypt(
-        init_L ^ plain_L, init_R ^ plain_R,
-        P, S1, S2, S3, S4,
-        u4_1_pack, u1_4_unpack
-      )
-      yield u4_2_pack(cipher_L, cipher_R)
-      init_L = plain_L ^ cipher_L
-      init_R = plain_R ^ cipher_R
-    
-  def decrypt_pcbc(self, data, init_vector):
-    S1, S2, S3, S4 = self.S
-    P = self.P
-    
-    u4_1_pack = self._u4_1_pack
-    u1_4_unpack = self._u1_4_unpack
-    decrypt = self._decrypt
-    
-    u4_2_pack = self._u4_2_pack
-    
-    try:
-      init_L, init_R = self._u4_2_unpack(init_vector)
-    except struct_error:
-      raise ValueError("initialization vector is not 8 bytes in length")
-    
-    try:
-      LR_iter = self._u4_2_iter_unpack(data)
-    except struct_error:
-      raise ValueError("data is not a multiple of the block-size in length")
-    
-    for cipher_L, cipher_R in LR_iter:
-      plain_L, plain_R = decrypt(
-        cipher_L, cipher_R,
-        P, S1, S2, S3, S4,
-        u4_1_pack, u1_4_unpack
-      )
-      plain_L ^= init_L
-      plain_R ^= init_R
-      yield u4_2_pack(plain_L, plain_R)
-      init_L = cipher_L ^ plain_L
-      init_R = cipher_R ^ plain_R
-    
-  def encrypt_cfb(self, data, init_vector):
-    S1, S2, S3, S4 = self.S
-    P = self.P
-    
-    u4_1_pack = self._u4_1_pack
-    u1_4_unpack = self._u1_4_unpack
-    encrypt = self._encrypt
-    
-    u4_2_pack = self._u4_2_pack
-    
-    data_len = len(data)
-    extra_bytes = data_len % 8
-    last_block_stop_i = data_len - extra_bytes
-    
-    try:
-      prev_cipher_L, prev_cipher_R = self._u4_2_unpack(init_vector)
-    except struct_error:
-      raise ValueError("initialization vector is not 8 bytes in length")
-    
-    for plain_L, plain_R in self._u4_2_iter_unpack(
-      data[0:last_block_stop_i]
-    ):
-      prev_cipher_L, prev_cipher_R = encrypt(
-        prev_cipher_L, prev_cipher_R,
-        P, S1, S2, S3, S4,
-        u4_1_pack, u1_4_unpack
-      )      
-      prev_cipher_L ^= plain_L
-      prev_cipher_R ^= plain_R
-      yield u4_2_pack(prev_cipher_L, prev_cipher_R)
-      
-    if extra_bytes:
-      yield bytes(
-        b ^ n for b, n in zip(
-          data[last_block_stop_i:],
-          u4_2_pack(
-            *encrypt(
-              prev_cipher_L, prev_cipher_R,
-              P, S1, S2, S3, S4,
-              u4_1_pack, u1_4_unpack
-            )
-          )
-        )
-      )
-      
-  def decrypt_cfb(self, data, init_vector):
-    S1, S2, S3, S4 = self.S
-    P = self.P
-    
-    u4_1_pack = self._u4_1_pack
-    u1_4_unpack = self._u1_4_unpack
-    encrypt = self._encrypt
-    
-    u4_2_pack = self._u4_2_pack
-    
-    data_len = len(data)
-    extra_bytes = data_len % 8
-    last_block_stop_i = data_len - extra_bytes
-    
-    try:
-      prev_cipher_L, prev_cipher_R = self._u4_2_unpack(init_vector)
-    except struct_error:
-      raise ValueError("initialization vector is not 8 bytes in length")
-    
-    for cipher_L, cipher_R in self._u4_2_iter_unpack(
-      data[0:last_block_stop_i]
-    ):
-      prev_cipher_L, prev_cipher_R = encrypt(
-        prev_cipher_L, prev_cipher_R,
-        P, S1, S2, S3, S4,
-        u4_1_pack, u1_4_unpack
-      )      
-      yield u4_2_pack(prev_cipher_L ^ cipher_L, prev_cipher_R ^ cipher_R)
-      prev_cipher_L = cipher_L
-      prev_cipher_R = cipher_R
-      
-    if extra_bytes:
-      yield bytes(
-        b ^ n for b, n in zip(
-          data[last_block_stop_i:],
-          u4_2_pack(
-            *encrypt(
-              prev_cipher_L, prev_cipher_R,
-              P, S1, S2, S3, S4,
-              u4_1_pack, u1_4_unpack
-            )
-          )
-        )
-      )
-      
   def encrypt_ofb(self, data, init_vector):
+    """
+    Return an iterator that encrypts `data` using the Output Feedback (OFB)
+    mode of operation.
+    
+    OFB mode can operate on `data` of any length.
+    
+    Each iteration, except the last, always returns a block-sized :obj:`bytes`
+    object (i.e. 8 bytes). The last iteration may return a :obj:`bytes` object
+    with a length less than the block-size, if `data` is not a multiple of the
+    block-size in length.
+    
+    `init_vector` is the initialization vector and should be a
+    :obj:`bytes`-like object with exactly 8 bytes.
+    If it is not, a :exc:`ValueError` exception is raised.
+    
+    `data` should be a :obj:`bytes`-like object (of any length).
+    """
     S1, S2, S3, S4 = self.S
     P = self.P
 
@@ -834,9 +371,9 @@ class Blowfish(object):
     except struct_error:
       raise ValueError("initialization vector is not 8 bytes in length")
     
-    for plain_L, plain_R in self._u4_2_iter_unpack(
-      data[0:last_block_stop_i]
-    ):
+    # running ofb stream
+    for plain_L, plain_R in self._u4_2_iter_unpack(data[0:last_block_stop_i]):
+      # running blowfish
       prev_L, prev_R = encrypt(
         prev_L, prev_R,
         P, S1, S2, S3, S4,
@@ -859,65 +396,27 @@ class Blowfish(object):
       )
       
   def decrypt_ofb(self, data, init_vector):
+    """
+    Return an iterator that decrypts `data` using the Output Feedback (OFB)
+    mode of operation.
+
+    .. note::
+        
+        In OFB mode, decrypting is the same as encrypting.
+        Therefore, calling this function is the same as calling
+        :meth:`encrypt_ofb`.
+        
+    .. seealso::
+
+        :meth:`encrypt_ofb`
+     """
     return self.encrypt_ofb(data, init_vector)
       
-  def encrypt_ctr(self, data, counter):
-    S1, S2, S3, S4 = self.S
-    P = self.P
-    
-    u4_1_pack = self._u4_1_pack
-    u1_4_unpack = self._u1_4_unpack
-    encrypt = self._encrypt
-    
-    u4_2_pack = self._u4_2_pack
-    
-    u4_2_unpack = self._u4_2_unpack
-    u8_1_pack = self._u8_1_pack
-    
-    data_len = len(data)
-    extra_bytes = data_len % 8
-    last_block_stop_i = data_len - extra_bytes
-    
-    for (plain_L, plain_R), counter_n in zip(
-      self._u4_2_iter_unpack(data[0:last_block_stop_i]),
-      counter
-    ):
-      try:
-        counter_L, counter_R = u4_2_unpack(u8_1_pack(counter_n))
-      except struct_error:
-        raise ValueError("integer in counter is not less than 2^64")
-      
-      counter_L, counter_R = encrypt(
-        counter_L, counter_R,
-        P, S1, S2, S3, S4,
-        u4_1_pack, u1_4_unpack
-      )
-      yield u4_2_pack(plain_L ^ counter_L, plain_R ^ counter_R)
-      
-    if extra_bytes:
-      try:
-        counter_L, counter_R = u4_2_unpack(u8_1_pack(next(counter)))
-      except struct_error:
-        raise ValueError("integer in counter is not less than 2^64")
-      
-      counter_L, counter_R = encrypt(
-        counter_L, counter_R,
-        P, S1, S2, S3, S4,
-        u4_1_pack, u1_4_unpack
-      )
-      yield bytes(
-        b ^ n for b, n in zip(
-          data[last_block_stop_i:],
-          u4_2_pack(counter_L, counter_R)
-        )
-      )
-      
-  def decrypt_ctr(self, data, counter):
-    return self.encrypt_ctr(data, counter)
-    
-def ctr_counter(nonce, f, start = 0):
-  for n in range(start, 2**64):
-    yield f(nonce, n)
-  while True:
-    for n in range(0, 2**64):
-      yield f(nonce, n)
+cipher = Cipher(b"blblb") # key
+data = b"hello world!"
+iv = urandom(8) # initialization vector
+
+data_encrypted = b"".join(cipher.encrypt_ofb(data, iv))
+data_decrypted = b"".join(cipher.decrypt_ofb(data_encrypted, iv))
+print(data_encrypted)
+print(data_decrypted)
