@@ -225,7 +225,7 @@ PI_S_BOXES = (
   ),
 )
 
-class Cipher(object):
+class BlowFish(object):
   def __init__(self, key, P_array = PI_P_ARRAY, S_boxes = PI_S_BOXES):
     if not 4 <= len(key) <= 56:
       raise ValueError("key is not between 4 and 56 bytes")
@@ -412,11 +412,3 @@ class Cipher(object):
      """
     return self.encrypt_ofb(data, init_vector)
       
-cipher = Cipher(b"blblb") # key
-data = b"hello world!"
-iv = urandom(8) # initialization vector
-
-data_encrypted = b"".join(cipher.encrypt_ofb(data, iv))
-data_decrypted = b"".join(cipher.decrypt_ofb(data_encrypted, iv))
-print(data_encrypted)
-print(data_decrypted)
