@@ -93,23 +93,4 @@ class ECElGamal:
         plaintext = bytes([c ^ k for c, k in zip(ciphertext, shared_secret_key)])
         return plaintext
 
-# Simulation: Bob sends a message to Alice
-def simulate_bob_to_alice():
-    # Instantiate Alice's and Bob's ECElGamal systems
-    alice = ECElGamal()
-    bob = ECElGamal()
 
-    # Bob's message
-    message = b"Hello Alice! This is a secret message from Bob."
-    print(f"Original Message from Bob: {message}")
-
-    # Bob encrypts the message using Alice's public key and his own private key
-    ephemeral_public_key, ciphertext = bob.encrypt(alice.public_key, message)
-    print(f"Ciphertext: {ciphertext}")
-
-    # Alice decrypts the message using her private key and Bob's public key
-    decrypted_message = alice.decrypt(alice.private_key, ephemeral_public_key, ciphertext)
-    print(f"Decrypted Message at Alice's side: {decrypted_message}")
-
-# Run the simulation
-simulate_bob_to_alice()
