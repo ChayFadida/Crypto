@@ -5,6 +5,7 @@ import sounddevice as sd
 from blowfish import BlowFish
 from os import urandom
 from new_rabin import RabinSignature
+from ElGamal import ECElGamal
 
 # Function to read audio data from a .wav file
 def read_wave_file(file_path):
@@ -60,7 +61,7 @@ print()
 
 # Play the original audio
 print("Playing original audio...")
-# play_audio(audio_data, frame_rate)
+play_audio(audio_data, frame_rate)
 print("[INFO] Original audio played.")
 print()
 
@@ -86,7 +87,7 @@ audio_data_encrypted = np.frombuffer(data_encrypted, dtype=np.int16)
 
 # Play the encrypted audio (this will be noise or garbage)
 print("Playing encrypted audio...")
-# play_audio(audio_data_encrypted, frame_rate)
+play_audio(audio_data_encrypted, frame_rate)
 print("[INFO] Encrypted audio played.")
 print()
 
@@ -107,23 +108,51 @@ print(f"Bob signs the audio message with the following signature:\n  Signature: 
 print()
 
 print("="*50)
+print("ENCRYPTING BLOWFISH KEY AND IV WITH EC-ELGAMAL")
+print("="*50)
+
+# Bob encrypts the Blowfish key and IV using Alice's EC-ElGamal public key
+bob_ec = ECElGamal()
+alice_ec = ECElGamal()  # Assuming Alice's public key is known to Bob
+
+# Encrypt Blowfish key
+ephemeral_public_key_key, encrypted_blowfish_key = bob_ec.encrypt(alice_ec.public_key, blowfish_key)
+print(f"Bob encrypts the Blowfish key with Alice's EC-ElGamal public key.")
+print(f"Encrypted Blowfish key: {encrypted_blowfish_key}")
+print()
+
+# Encrypt IV
+ephemeral_public_key_iv, encrypted_iv = bob_ec.encrypt(alice_ec.public_key, iv)
+print(f"Bob encrypts the IV with Alice's EC-ElGamal public key.")
+print(f"Encrypted IV: {encrypted_iv}")
+print()
+
+print("="*50)
 print("ALICE RECEIVES THE MESSAGE")
 print("="*50)
 
-# ALICE
+# Alice decrypts the Blowfish key and IV using her private key
+decrypted_blowfish_key = alice_ec.decrypt(alice_ec.private_key, ephemeral_public_key_key, encrypted_blowfish_key)
+decrypted_iv = alice_ec.decrypt(alice_ec.private_key, ephemeral_public_key_iv, encrypted_iv)
+
+print(f"Alice decrypts the Blowfish key: {decrypted_blowfish_key}")
+print(f"Alice decrypts the IV: {decrypted_iv}")
+print()
+
 if RabinSignature.verify(public_rabin_key, audio_data_encrypted.tobytes(), rabin_sign, padding):
     print("Valid signature! The sender is authorized.")
     print()
 
     # Decrypt the audio data
-    data_decrypted = b''.join(blowfish.decrypt_ofb(data_encrypted, iv))
+    alice_blowfish = BlowFish(decrypted_blowfish_key)
+    data_decrypted = b''.join(alice_blowfish.decrypt_ofb(data_encrypted, decrypted_iv))
 
     # Convert decrypted bytes back to numpy array
     audio_data_decrypted = np.frombuffer(data_decrypted, dtype=np.int16)
 
     # Play the decrypted audio
     print("Playing decrypted audio...")
-    # play_audio(audio_data_decrypted, frame_rate)
+    play_audio(audio_data_decrypted, frame_rate)
     print("[INFO] Decrypted audio played.")
 else:
     print("Invalid signature! The sender is not authorized.")
