@@ -61,7 +61,7 @@ print()
 
 # Play the original audio
 print("Playing original audio...")
-play_audio(audio_data, frame_rate)
+#play_audio(audio_data, frame_rate)
 print("[INFO] Original audio played.")
 print()
 
@@ -87,7 +87,7 @@ audio_data_encrypted = np.frombuffer(data_encrypted, dtype=np.int16)
 
 # Play the encrypted audio (this will be noise or garbage)
 print("Playing encrypted audio...")
-play_audio(audio_data_encrypted, frame_rate)
+#play_audio(audio_data_encrypted, frame_rate)
 print("[INFO] Encrypted audio played.")
 print()
 
@@ -152,7 +152,7 @@ if RabinSignature.verify(public_rabin_key, audio_data_encrypted.tobytes(), rabin
 
     # Play the decrypted audio
     print("Playing decrypted audio...")
-    play_audio(audio_data_decrypted, frame_rate)
+    #play_audio(audio_data_decrypted, frame_rate)
     print("[INFO] Decrypted audio played.")
 else:
     print("Invalid signature! The sender is not authorized.")
