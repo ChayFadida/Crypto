@@ -1,101 +1,81 @@
 import random
-from sympy import mod_inverse, isprime, sqrt_mod
+import hashlib
+import math
 
-def generate_prime(bits):
-    """
-    Generate a prime number of the specified bit length.
-    
-    Parameters:
-        bits (int): The bit length of the prime number.
-        
-    Returns:
-        int: A prime number of the specified bit length.
-    """
-    while True:
-        prime_candidate = random.getrandbits(bits)
-        if isprime(prime_candidate):
-            return prime_candidate
+class RabinSignature:
+    SECURITY_LEVEL = 1  # Bit length for public key and hash
 
-def generate_keys(bits=64):
-    """
-    Generate public and private keys for the Rabin signature algorithm.
-    
-    Parameters:
-        bits (int): The bit length of the prime numbers p and q.
-        
-    Returns:
-        tuple: Public key (n) and private keys (p, q).
-    """
-    p = generate_prime(bits)
-    q = generate_prime(bits)
-    n = p * q
-    return (n, p, q)
+    @staticmethod
+    def is_prime(number):
+        """
+        Checks if a number is prime.
+        """
+        if number % 2 == 0 and number > 2:
+            return False
+        return all(number % i != 0 for i in range(3, int(math.sqrt(number)) + 1, 2))
 
-def hash_function(message):
-    """
-    Simple hash function for demonstration purposes.
-    d
-    Parameters:
-        message (str): The message to hash.
-        
-    Returns:
-        int: The hash of the message modulo n.
-    """
-    return int.from_bytes(message.encode(), 'big') % n
+    @staticmethod
+    def hash512(x: bytes) -> bytes:
+        hx = hashlib.sha256(x).digest()
+        idx = len(hx) // 2
+        return hashlib.sha256(hx[:idx]).digest() + hashlib.sha256(hx[idx:]).digest()
 
-def sign(message, p, q):
-    """
-    Generate a Rabin signature for a given message using private keys p and q.
-    
-    Parameters:
-        message (str): The message to sign.
-        p (int): The prime number p.
-        q (int): The prime number q.
-        
-    Returns:
-        int: The Rabin signature of the message.
-        
-    Raises:
-        ValueError: If no square root exists for the given hash modulo n.
-    """
-    H = hash_function(message)
-    n = p * q
-    s = sqrt_mod(H, n)
-    if s is None:
-        raise ValueError("No square root exists for the given hash modulo n.")
-    return s
+    @staticmethod
+    def hash_to_int(x: bytes) -> int:
+        """Converts hash output to an integer."""
+        hx = RabinSignature.hash512(x)
+        for i in range(RabinSignature.SECURITY_LEVEL - 1):
+            hx += RabinSignature.hash512(hx)
+        return int.from_bytes(hx, 'little')
 
-def verify(message, signature, n):
-    """
-    Verify a Rabin signature for a given message.
-    
-    Parameters:
-        message (str): The message to verify.
-        signature (int): The Rabin signature.
-        n (int): The public key n.
-        
-    Returns:
-        bool: True if the signature is valid, False otherwise.
-    """
-    H = hash_function(message)
-    return pow(signature, 2, n) == H
+    @staticmethod
+    def generate_keys():
+        # Generate p and q, both congruent to 3 mod 4
+        while True:
+            p = 3 + 4 * random.randint(1, 100)
+            q = 3 + 4 * random.randint(1, 100)
+            if RabinSignature.is_prime(p) and RabinSignature.is_prime(q) and p != q:
+                return p, q
 
-# Example usage
-message = "This is a secret message."
+    @staticmethod
+    def sign_rabin(p: int, q: int, message: bytes) -> tuple:
+        n = p * q
+        i = 0 
+        while True:
+            h = RabinSignature.hash_to_int(message + b'\x00' * i) % n
+            if (h % p == 0 or pow(h, (p - 1) // 2, p) == 1) and (h % q == 0 or pow(h, (q - 1) // 2, q) == 1):
+                break
+            i += 1
+        lp = q * pow(h, (p + 1) // 4, p) * pow(q, p - 2, p)
+        rp = p * pow(h, (q + 1) // 4, q) * pow(p, q - 2, q)
+        s = (lp + rp) % n
+        return s, i
 
-# Key Generation
-print("Generating keys...")
-n, p, q = generate_keys()
+    @staticmethod
+    def verify(n: int, message: bytes, s: int, padding: int) -> bool:
+        h = RabinSignature.hash_to_int(message + b'\x00' * padding) % n
+        return h == (s * s) % n
 
-print(f"Public key (n): {n}")
-print(f"Private key (p, q): ({p}, {q})")
+    @staticmethod
+    def main():
+        # Generate keys
+        p, q = RabinSignature.generate_keys()
+        n = p * q
 
-# Signing
-print("Signing the message...")
-signature = sign(message, p, q)
-print(f"Signature: {signature}")
+        print(f"Public key (n): {n}")
+        print(f"Private key (p, q): ({p}, {q})")
 
-# Verification
-print("Verifying the signature...")
-is_valid = verify(message, signature, n)
-print(f"Signature valid: {is_valid}")
+        # Message to be signed
+        message = b"Hello, this is a test message!"
+
+        # Sign the message
+        s, padding = RabinSignature.sign_rabin(p, q, message)
+        print(f"Signature: {s}")
+        print(f"Padding used: {padding}")
+
+        # Verify the signature
+        is_valid = RabinSignature.verify(n, message, s, padding)
+        print(f"Signature valid: {is_valid}")
+
+if __name__ == "__main__":
+    RabinSignature.main()

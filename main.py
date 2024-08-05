@@ -4,7 +4,7 @@ import numpy as np
 import sounddevice as sd
 from blowfish import BlowFish
 from os import urandom
-from new_rabin import RabinSignature
+from rabin_sig import RabinSignature
 from ElGamal import ECElGamal
 
 # Function to read audio data from a .wav file
